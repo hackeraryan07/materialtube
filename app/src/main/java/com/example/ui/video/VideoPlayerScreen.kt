@@ -16,6 +16,8 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.outlined.ThumbDown
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,6 +45,7 @@ fun VideoPlayerScreen(
     viewModel: VideoPlayerViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var showSettingsSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(videoUrl) {
         viewModel.loadVideo(videoUrl)
@@ -68,7 +71,10 @@ fun VideoPlayerScreen(
                     }
                 }
                 is VideoUiState.Success -> {
-                    VideoPlayer(streamUrl = state.streamUrl)
+                    VideoPlayer(
+                        streamUrl = state.streamUrl,
+                        onSettingsClick = { showSettingsSheet = true }
+                    )
                     
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth()
@@ -192,30 +198,6 @@ fun VideoPlayerScreen(
                             }
                             
                             Spacer(modifier = Modifier.height(16.dp))
-                            // Quality selection
-                            Text(
-                                text = "Quality",
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(horizontal = 12.dp)
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            LazyRow(
-                                contentPadding = PaddingValues(horizontal = 12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                items(state.info.videoStreams.size) { index ->
-                                    val stream = state.info.videoStreams[index]
-                                    val resolution = stream.getResolution()
-                                    val isSelected = resolution == state.selectedQualityName
-                                    FilterChip(
-                                        selected = isSelected,
-                                        onClick = { viewModel.changeQuality(stream.content, resolution) },
-                                        label = { Text(resolution) }
-                                    )
-                                }
-                            }
-                            
-                            Spacer(modifier = Modifier.height(16.dp))
                             HorizontalDivider()
                             Spacer(modifier = Modifier.height(16.dp))
                         }
@@ -228,6 +210,33 @@ fun VideoPlayerScreen(
                                 VideoItem(item = relatedItem, onClick = { onVideoClick(relatedItem.url) })
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+    
+    if (showSettingsSheet && uiState is VideoUiState.Success) {
+        val state = uiState as VideoUiState.Success
+        ModalBottomSheet(onDismissRequest = { showSettingsSheet = false }) {
+            Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+                Text("Quality for Video", style = MaterialTheme.typography.titleLarge)
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyColumn {
+                    items(state.info.videoStreams.size) { index ->
+                        val stream = state.info.videoStreams[index]
+                        val resolution = stream.getResolution()
+                        val isSelected = resolution == state.selectedQualityName
+                        ListItem(
+                            headlineContent = { Text(resolution) },
+                            trailingContent = {
+                                if (isSelected) Icon(Icons.Default.Check, contentDescription = "Selected")
+                            },
+                            modifier = Modifier.clickable {
+                                viewModel.changeQuality(stream.content, resolution)
+                                showSettingsSheet = false
+                            }
+                        )
                     }
                 }
             }
@@ -254,41 +263,75 @@ fun ActionButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: S
 }
 
 @Composable
-fun VideoPlayer(streamUrl: String) {
+fun VideoPlayer(streamUrl: String, onSettingsClick: () -> Unit) {
     val context = LocalContext.current
-    val exoPlayer = remember(streamUrl) {
+    var isControllerVisible by remember { mutableStateOf(true) }
+    var isFirstLaunch by remember { mutableStateOf(true) }
+    
+    val exoPlayer = remember {
         val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
         val dataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory().setUserAgent(userAgent)
         val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory)
         
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
-            .build().apply {
-                val mediaItem = MediaItem.fromUri(Uri.parse(streamUrl))
-                setMediaItem(mediaItem)
-                prepare()
-                playWhenReady = true
-            }
+            .build()
     }
 
-    DisposableEffect(streamUrl) {
+    LaunchedEffect(streamUrl) {
+        val playbackPosition = exoPlayer.currentPosition
+        val playWhenReadyState = if (isFirstLaunch) true else exoPlayer.playWhenReady
+        isFirstLaunch = false
+        
+        val mediaItem = MediaItem.fromUri(Uri.parse(streamUrl))
+        exoPlayer.setMediaItem(mediaItem)
+        if (playbackPosition > 0L) {
+            exoPlayer.seekTo(playbackPosition)
+        }
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = playWhenReadyState
+    }
+
+    DisposableEffect(Unit) {
         onDispose {
             exoPlayer.release()
         }
     }
     
-    AndroidView(
-        factory = {
-            PlayerView(context).apply {
-                player = exoPlayer
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-            }
-        },
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(16f / 9f)
-    )
+    ) {
+        AndroidView(
+            factory = {
+                PlayerView(context).apply {
+                    player = exoPlayer
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+                        isControllerVisible = (visibility == android.view.View.VISIBLE)
+                    })
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+        
+        androidx.compose.animation.AnimatedVisibility(
+            visible = isControllerVisible,
+            enter = androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.fadeOut(),
+            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+        ) {
+            IconButton(onClick = onSettingsClick) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Settings",
+                    tint = androidx.compose.ui.graphics.Color.White
+                )
+            }
+        }
+    }
 }
