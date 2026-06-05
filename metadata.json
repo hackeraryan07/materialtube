@@ -1,0 +1,6 @@
+{
+  "name": "NewTube",
+  "description": "YouTube-like application using NewPipe Extractor",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
