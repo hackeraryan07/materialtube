@@ -32,9 +32,7 @@ class VideoPlayerViewModel : ViewModel() {
                     
                     info.videoOnlyStreams.forEach { stream ->
                         val resolution = stream.getResolution()
-                        if (bestAudio != null) {
-                            qualityOptions.add(QualityOption(resolution, stream.content, bestAudio.content))
-                        }
+                        qualityOptions.add(QualityOption(resolution, stream.content, bestAudio?.content))
                     }
                     
                     val optionsDistinct = qualityOptions.distinctBy { it.resolution }.sortedByDescending { it.resolution.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0 }
