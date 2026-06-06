@@ -73,6 +73,7 @@ fun VideoPlayerScreen(
                 is VideoUiState.Success -> {
                     VideoPlayer(
                         streamUrl = state.streamUrl,
+                        audioUrl = state.audioUrl,
                         onSettingsClick = { showSettingsSheet = true }
                     )
                     
@@ -223,17 +224,16 @@ fun VideoPlayerScreen(
                 Text("Quality for Video", style = MaterialTheme.typography.titleLarge)
                 Spacer(modifier = Modifier.height(8.dp))
                 LazyColumn {
-                    items(state.info.videoStreams.size) { index ->
-                        val stream = state.info.videoStreams[index]
-                        val resolution = stream.getResolution()
-                        val isSelected = resolution == state.selectedQualityName
+                    items(state.qualityOptions.size) { index ->
+                        val option = state.qualityOptions[index]
+                        val isSelected = option.resolution == state.selectedQualityName
                         ListItem(
-                            headlineContent = { Text(resolution) },
+                            headlineContent = { Text(option.resolution) },
                             trailingContent = {
                                 if (isSelected) Icon(Icons.Default.Check, contentDescription = "Selected")
                             },
                             modifier = Modifier.clickable {
-                                viewModel.changeQuality(stream.content, resolution)
+                                viewModel.changeQuality(option.videoUrl, option.audioUrl, option.resolution)
                                 showSettingsSheet = false
                             }
                         )
@@ -263,28 +263,38 @@ fun ActionButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: S
 }
 
 @Composable
-fun VideoPlayer(streamUrl: String, onSettingsClick: () -> Unit) {
+fun VideoPlayer(streamUrl: String, audioUrl: String? = null, onSettingsClick: () -> Unit) {
     val context = LocalContext.current
     var isControllerVisible by remember { mutableStateOf(true) }
     var isFirstLaunch by remember { mutableStateOf(true) }
     
+    val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    val dataSourceFactory = remember { androidx.media3.datasource.DefaultHttpDataSource.Factory().setUserAgent(userAgent) }
+
     val exoPlayer = remember {
-        val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-        val dataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory().setUserAgent(userAgent)
         val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory)
-        
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
     }
 
-    LaunchedEffect(streamUrl) {
+    LaunchedEffect(streamUrl, audioUrl) {
         val playbackPosition = exoPlayer.currentPosition
         val playWhenReadyState = if (isFirstLaunch) true else exoPlayer.playWhenReady
         isFirstLaunch = false
         
-        val mediaItem = MediaItem.fromUri(Uri.parse(streamUrl))
-        exoPlayer.setMediaItem(mediaItem)
+        val videoMediaItem = MediaItem.fromUri(Uri.parse(streamUrl))
+        val videoMediaSource = androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(videoMediaItem)
+
+        val mediaSource = if (audioUrl != null) {
+            val audioMediaItem = MediaItem.fromUri(Uri.parse(audioUrl))
+            val audioMediaSource = androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(audioMediaItem)
+            androidx.media3.exoplayer.source.MergingMediaSource(videoMediaSource, audioMediaSource)
+        } else {
+            videoMediaSource
+        }
+        
+        exoPlayer.setMediaSource(mediaSource)
         if (playbackPosition > 0L) {
             exoPlayer.seekTo(playbackPosition)
         }

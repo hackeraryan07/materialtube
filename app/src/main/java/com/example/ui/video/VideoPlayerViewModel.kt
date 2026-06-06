@@ -22,16 +22,42 @@ class VideoPlayerViewModel : ViewModel() {
                 if (info == null) {
                     _uiState.value = VideoUiState.Error("Failed to fetch stream info (null).")
                 } else {
-                    val bestStream = info.videoStreams.maxByOrNull { it.getResolution().replace("p","").toIntOrNull() ?: 0 }
-                    if (bestStream != null) {
-                        _uiState.value = VideoUiState.Success(bestStream.content, info, bestStream.getResolution())
-                    } else {
-                        val audioOnly = info.audioStreams.firstOrNull()
-                        if (audioOnly != null) {
-                            _uiState.value = VideoUiState.Success(audioOnly.content, info, "Audio")
-                        } else {
-                            _uiState.value = VideoUiState.Error("No playable streams found.")
+                    val bestAudio = info.audioStreams.maxByOrNull { it.getBitrate() }
+                    
+                    val qualityOptions = mutableListOf<QualityOption>()
+                    
+                    info.videoStreams.forEach { stream ->
+                        qualityOptions.add(QualityOption(stream.getResolution(), stream.content, null))
+                    }
+                    
+                    info.videoOnlyStreams.forEach { stream ->
+                        val resolution = stream.getResolution()
+                        if (bestAudio != null) {
+                            qualityOptions.add(QualityOption(resolution, stream.content, bestAudio.content))
                         }
+                    }
+                    
+                    val optionsDistinct = qualityOptions.distinctBy { it.resolution }.sortedByDescending { it.resolution.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0 }
+                    
+                    if (optionsDistinct.isNotEmpty()) {
+                        val selected = optionsDistinct.first()
+                        _uiState.value = VideoUiState.Success(
+                            streamUrl = selected.videoUrl,
+                            audioUrl = selected.audioUrl,
+                            info = info,
+                            selectedQualityName = selected.resolution,
+                            qualityOptions = optionsDistinct
+                        )
+                    } else if (bestAudio != null) {
+                        _uiState.value = VideoUiState.Success(
+                            streamUrl = bestAudio.content,
+                            audioUrl = null,
+                            info = info,
+                            selectedQualityName = "Audio Only",
+                            qualityOptions = listOf(QualityOption("Audio Only", bestAudio.content, null))
+                        )
+                    } else {
+                        _uiState.value = VideoUiState.Error("No playable streams found.")
                     }
                 }
             } catch (e: Exception) {
@@ -41,20 +67,28 @@ class VideoPlayerViewModel : ViewModel() {
         }
     }
 
-    fun changeQuality(streamUrl: String, qualityName: String) {
+    fun changeQuality(streamUrl: String, audioUrl: String?, qualityName: String) {
         val currentState = _uiState.value
         if (currentState is VideoUiState.Success) {
-            _uiState.value = currentState.copy(streamUrl = streamUrl, selectedQualityName = qualityName)
+            _uiState.value = currentState.copy(streamUrl = streamUrl, audioUrl = audioUrl, selectedQualityName = qualityName)
         }
     }
 }
+
+data class QualityOption(
+    val resolution: String,
+    val videoUrl: String,
+    val audioUrl: String? = null
+)
 
 sealed class VideoUiState {
     object Loading : VideoUiState()
     data class Success(
         val streamUrl: String,
+        val audioUrl: String?,
         val info: StreamInfo,
-        val selectedQualityName: String = ""
+        val selectedQualityName: String = "",
+        val qualityOptions: List<QualityOption> = emptyList()
     ) : VideoUiState()
     data class Error(val message: String) : VideoUiState()
 }
